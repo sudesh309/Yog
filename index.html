@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Yog · Calm Focus</title>
+  <meta name="description" content="A distraction-free Indian yoga meditation timer with breath guide and tones, designed for ADHD minds.">
+  <meta name="theme-color" content="#14122a">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ───────────── Home: pick one practice, one duration, begin ───────────── -->
+  <main id="home" class="screen active" aria-labelledby="app-title">
+    <header class="brand">
+      <span class="om" aria-hidden="true">ॐ</span>
+      <h1 id="app-title">Yog</h1>
+      <p class="tagline">Short, gentle meditation for restless minds</p>
+    </header>
+
+    <section aria-labelledby="h-practice">
+      <h2 id="h-practice" class="step"><span>1</span> Choose a practice</h2>
+      <div id="practices" class="practices" role="radiogroup" aria-labelledby="h-practice"></div>
+    </section>
+
+    <section aria-labelledby="h-time">
+      <h2 id="h-time" class="step"><span>2</span> How long?</h2>
+      <div id="durations" class="chips" role="radiogroup" aria-labelledby="h-time"></div>
+      <p class="hint">New to this? Start with 3 minutes. Short and often beats long and rare.</p>
+    </section>
+
+    <button id="begin" class="begin" type="button">Begin</button>
+
+    <details class="settings">
+      <summary>Sound &amp; comfort</summary>
+      <div class="setting">
+        <label for="s-ambient">Background sound</label>
+        <select id="s-ambient">
+          <option value="none">Silence</option>
+          <option value="tanpura">Tanpura drone</option>
+          <option value="brown">Brown noise (great for focus)</option>
+        </select>
+      </div>
+      <div class="setting">
+        <label for="s-breathtone">Breath guide tone</label>
+        <input id="s-breathtone" type="checkbox" role="switch">
+      </div>
+      <div class="setting">
+        <label for="s-checkin">Gentle check-in bell</label>
+        <select id="s-checkin">
+          <option value="0">Off</option>
+          <option value="30">Every 30 s</option>
+          <option value="60">Every 1 min</option>
+          <option value="120">Every 2 min</option>
+        </select>
+      </div>
+      <div class="setting">
+        <label for="s-volume">Volume</label>
+        <input id="s-volume" type="range" min="0" max="1" step="0.05">
+      </div>
+      <div class="setting">
+        <label for="s-hideclock">Hide the clock (less clock-watching)</label>
+        <input id="s-hideclock" type="checkbox" role="switch">
+      </div>
+      <div class="setting">
+        <label for="s-vibrate">Vibrate on breath change (phones)</label>
+        <input id="s-vibrate" type="checkbox" role="switch">
+      </div>
+      <button id="test-sound" type="button" class="link">Play a test bell</button>
+    </details>
+
+    <p id="stats" class="stats" aria-live="polite"></p>
+  </main>
+
+  <!-- ───────────── Session: only the breath, nothing else ───────────── -->
+  <main id="session" class="screen" aria-label="Meditation in progress">
+    <div class="stage" id="stage">
+      <svg class="ring" viewBox="0 0 200 200" aria-hidden="true">
+        <circle class="ring-bg" cx="100" cy="100" r="94"></circle>
+        <circle class="ring-fg" id="ring-fg" cx="100" cy="100" r="94"></circle>
+      </svg>
+      <div class="orb" id="orb"></div>
+      <div class="flame" id="flame" aria-hidden="true"><div class="flame-inner"></div></div>
+      <div class="center-text">
+        <div id="phase" class="phase" aria-live="polite"></div>
+        <div id="count" class="count" aria-hidden="true"></div>
+      </div>
+    </div>
+
+    <p id="cue" class="cue"></p>
+    <p id="clock" class="clock" aria-live="off"></p>
+
+    <div id="controls" class="controls">
+      <button id="pause" type="button" class="ctl" aria-label="Pause">Pause</button>
+      <button id="end" type="button" class="ctl" aria-label="End session">End</button>
+    </div>
+    <p id="tap-hint" class="tap-hint">Mind wandered? Tap anywhere (or press Space) to come back.</p>
+    <div id="ripple-layer" aria-hidden="true"></div>
+  </main>
+
+  <!-- ───────────── Done: kind summary ───────────── -->
+  <main id="done" class="screen" aria-labelledby="done-title">
+    <span class="om big" aria-hidden="true">ॐ</span>
+    <h2 id="done-title">Well done</h2>
+    <p id="done-summary" class="summary"></p>
+    <p id="done-note" class="note"></p>
+    <div class="done-actions">
+      <button id="again" type="button" class="begin">Again</button>
+      <button id="home-btn" type="button" class="link">Back to start</button>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
