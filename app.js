@@ -1,14 +1,16 @@
 /* Yog — a calm meditation timer for ADHD minds.
- * Plain JavaScript, no dependencies. All sounds are synthesised with the Web Audio API,
- * so the app works offline and needs no audio files. */
+ * Plain JavaScript, no dependencies. All sounds (bells, bowl, tanpura, sitar, bansuri flute)
+ * are synthesised with the Web Audio API, so the app works offline and needs no audio files. */
 (() => {
   'use strict';
 
   // ───────────────────────── Practices ─────────────────────────
-  // Each phase: [label, seconds, kind]. kind: 'in' grows the orb, 'out' shrinks it, 'hold' keeps it.
+  // mode 'breath': phases are [label, seconds, kind]; 'in' grows the orb, 'out' shrinks it, 'hold' keeps it.
+  // mode 'gaze':   Trataka candle flame.  mode 'bowl': a singing bowl struck at a steady interval.
   const PRACTICES = [
     {
       id: 'anapana',
+      mode: 'breath',
       name: 'Breath Counting',
       sk: 'Ānāpāna · आनापान',
       desc: 'Count each breath from 1 to 10, then start again. Lost count? Just begin at 1. Best first choice for a busy mind.',
@@ -18,6 +20,7 @@
     },
     {
       id: 'sama',
+      mode: 'breath',
       name: 'Box Breathing',
       sk: 'Sama Vṛtti · समवृत्ति',
       desc: 'Equal in, hold, out, hold. A steady rhythm that settles a racing mind.',
@@ -27,6 +30,7 @@
     },
     {
       id: 'bhramari',
+      mode: 'breath',
       name: 'Humming Bee',
       sk: 'Bhrāmarī · भ्रामरी',
       desc: 'Breathe in, then hum softly like a bee as you breathe out. The vibration gives restless attention something to hold.',
@@ -36,6 +40,7 @@
     },
     {
       id: 'nadi',
+      mode: 'breath',
       name: 'Alternate Nostril',
       sk: 'Nāḍī Śodhana · नाड़ी शोधन',
       desc: 'Breathe through one nostril at a time, switching sides. Balancing and calming; keeps the hands and mind busy.',
@@ -45,6 +50,7 @@
     },
     {
       id: 'om',
+      mode: 'breath',
       name: 'Om Chanting',
       sk: 'Oṃ Japa · ॐ जप',
       desc: 'Breathe in, then chant a long “A-U-M” on the out-breath. Sound is an easy anchor when silence feels too loud.',
@@ -53,21 +59,40 @@
       counter: 'round',
     },
     {
+      id: 'bowl',
+      mode: 'bowl',
+      name: 'Singing Bowl',
+      sk: 'Nāda · नाद',
+      desc: 'A Buddhist singing bowl rings at a steady pace. Follow each tone until it fully fades, feel its vibration, rest in the silence until the next one.',
+      intro: 'Close your eyes if you like. Follow the bowl’s sound all the way into silence. Notice where you feel the vibration.',
+      interval: 20,
+    },
+    {
       id: 'trataka',
+      mode: 'gaze',
       name: 'Candle Gazing',
       sk: 'Trāṭaka · त्राटक',
       desc: 'Rest your eyes on a single steady flame. One point to look at, nothing else. Near the end, close your eyes.',
       intro: 'Soften your gaze on the flame. Blink whenever you need to. When the bell rings, close your eyes.',
-      pattern: null,
-      counter: null,
+      closedPct: 30,
     },
   ];
 
+  const SOUNDS = [
+    ['none', 'Silence'],
+    ['tanpura', 'Tanpura'],
+    ['sitar', 'Sitar'],
+    ['flute', 'Bansuri flute'],
+    ['duet', 'Sitar + flute'],
+    ['brown', 'Brown noise'],
+  ];
+
   const DURATIONS = [1, 3, 5, 10, 15, 20]; // minutes
+  const DEFAULT_DURATION = 3;
   const SETTLE_SECONDS = 5;
   const ORB_MIN = 0.55;
   const ORB_MAX = 1;
-  const TRATAKA_EYES_CLOSED_AT = 0.7; // fraction of session
+  const LIMITS = { in: [2, 15], out: [2, 20], hold: [0, 15], interval: [8, 60], closedPct: [10, 60], minutes: [1, 120] };
 
   const CHECKIN_CUES = [
     'Where is your attention right now? Gently come back to the breath.',
@@ -91,27 +116,61 @@
   };
 
   const DEFAULTS = {
-    practice: 'anapana', duration: 3, ambient: 'none', breathTone: true,
+    practice: 'anapana', ambient: 'none', breathTone: true,
     checkin: 60, volume: 0.7, hideClock: false, vibrate: false,
+    custom: {}, // per practice: { duration, pattern: [secs…], interval, bowlVibrate, closedPct }
   };
   const settings = Object.assign({}, DEFAULTS, store.get('yog.settings', {}));
+  if (typeof settings.custom !== 'object' || !settings.custom) settings.custom = {};
   const saveSettings = () => store.set('yog.settings', settings);
 
+  const clamp = (v, [lo, hi]) => Math.min(hi, Math.max(lo, v));
+  const custom = (p) => settings.custom[p.id] || (settings.custom[p.id] = {});
+  // settings.duration is the single global duration saved by older versions of the app.
+  const durationFor = (p) => settings.custom[p.id]?.duration ?? settings.duration ?? DEFAULT_DURATION;
+  const patternFor = (p) => p.pattern.map(([label, secs, kind], i) => [label, settings.custom[p.id]?.pattern?.[i] ?? secs, kind]);
+  const intervalFor = (p) => settings.custom[p.id]?.interval ?? p.interval;
+  const closedPctFor = (p) => settings.custom[p.id]?.closedPct ?? p.closedPct;
+  const bowlVibrateFor = (p) => settings.custom[p.id]?.bowlVibrate ?? true;
+
   // ───────────────────────── Audio ─────────────────────────
+  const RAAG = [0, 2, 4, 7, 9];          // Raag Bhupali: Sa Re Ga Pa Dha — calm, pentatonic
+  const RESTING = [0, 2, 3];             // phrases settle on Sa, Ga or Pa
+  const raagFreq = (sa, step) => {
+    const oct = Math.floor(step / 5);
+    return sa * Math.pow(2, oct + RAAG[step - oct * 5] / 12);
+  };
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
   const sound = {
     ctx: null,
     master: null,
+    reverbIn: null,
     ambient: null,     // { gain, stop() }
-    tanpuraTimer: null,
+    timers: [],
+    ksCache: new Map(),
 
     ensure() {
       if (!this.ctx) {
         const Ctx = window.AudioContext || window.webkitAudioContext;
         if (!Ctx) return false;
-        this.ctx = new Ctx();
-        this.master = this.ctx.createGain();
+        const ctx = this.ctx = new Ctx();
+        this.master = ctx.createGain();
         this.master.gain.value = settings.volume;
-        this.master.connect(this.ctx.destination);
+        this.master.connect(ctx.destination);
+        // Small hall reverb from a generated impulse response.
+        const len = Math.floor(ctx.sampleRate * 3);
+        const ir = ctx.createBuffer(2, len, ctx.sampleRate);
+        for (let c = 0; c < 2; c++) {
+          const d = ir.getChannelData(c);
+          for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
+        }
+        const conv = ctx.createConvolver();
+        conv.buffer = ir;
+        this.reverbIn = ctx.createGain();
+        this.reverbIn.gain.value = 0.35;
+        this.reverbIn.connect(conv).connect(this.master);
       }
       if (this.ctx.state === 'suspended') this.ctx.resume();
       return true;
@@ -121,11 +180,24 @@
       if (this.master) this.master.gain.setTargetAtTime(v, this.ctx.currentTime, 0.05);
     },
 
+    noise() {
+      if (!this.noiseBuf) {
+        const len = this.ctx.sampleRate * 2;
+        this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+        const d = this.noiseBuf.getChannelData(0);
+        for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+      }
+      return this.noiseBuf;
+    },
+
     // Singing-bowl style bell: a few inharmonic partials, each a slightly detuned pair for shimmer.
     bell(delay = 0, base = 196, strength = 1) {
       if (!this.ensure()) return;
       const ctx = this.ctx;
       const t = ctx.currentTime + delay;
+      const out = ctx.createGain();
+      out.connect(this.master);
+      out.connect(this.reverbIn);
       const partials = [[1, 1, 7], [2.01, 0.45, 5], [2.76, 0.35, 4], [4.07, 0.18, 2.5], [5.43, 0.1, 1.6]];
       for (const [ratio, amp, decay] of partials) {
         for (const detune of [-0.6, 0.6]) {
@@ -136,11 +208,55 @@
           g.gain.setValueAtTime(0.0001, t);
           g.gain.exponentialRampToValueAtTime(0.11 * amp * strength, t + 0.008);
           g.gain.exponentialRampToValueAtTime(0.0001, t + decay);
-          osc.connect(g).connect(this.master);
+          osc.connect(g).connect(out);
           osc.start(t);
           osc.stop(t + decay + 0.05);
         }
       }
+    },
+
+    // Tibetan / Buddhist singing bowl: low, long, beating partials spread left and right, plus a soft mallet knock.
+    bowl(base = 174.6) {
+      if (!this.ensure()) return;
+      const ctx = this.ctx;
+      const t = ctx.currentTime + 0.02;
+      const out = ctx.createGain();
+      out.connect(this.master);
+      out.connect(this.reverbIn);
+      const partials = [[1, 1, 18], [2.71, 0.45, 12], [5.15, 0.22, 7], [8.17, 0.1, 4], [11.9, 0.05, 2.5]];
+      for (const [ratio, amp, decay] of partials) {
+        for (const [beat, pan] of [[-0.9, -0.7], [0.9, 0.7]]) {
+          const osc = ctx.createOscillator();
+          const g = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = base * ratio + beat * Math.sqrt(ratio);
+          g.gain.setValueAtTime(0.0001, t);
+          g.gain.exponentialRampToValueAtTime(0.1 * amp, t + 0.012);
+          g.gain.exponentialRampToValueAtTime(0.0001, t + decay);
+          osc.connect(g);
+          if (ctx.createStereoPanner) {
+            const p = ctx.createStereoPanner();
+            p.pan.value = pan;
+            g.connect(p).connect(out);
+          } else {
+            g.connect(out);
+          }
+          osc.start(t);
+          osc.stop(t + decay + 0.05);
+        }
+      }
+      const knock = ctx.createBufferSource();
+      knock.buffer = this.noise();
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 900;
+      bp.Q.value = 2;
+      const kg = ctx.createGain();
+      kg.gain.setValueAtTime(0.18, t);
+      kg.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+      knock.connect(bp).connect(kg).connect(out);
+      knock.start(t);
+      knock.stop(t + 0.1);
     },
 
     // Soft gliding tone that rises while breathing in and falls while breathing out.
@@ -170,44 +286,25 @@
       osc.stop(t + seconds + 0.05); osc2.stop(t + seconds + 0.05);
     },
 
-    startAmbient(type) {
-      this.stopAmbient();
-      if (type === 'none' || !this.ensure()) return;
+    // Runs `fn` now and every 400 ms; callers schedule audio a couple of seconds ahead,
+    // so throttled background timers never leave gaps.
+    every(fn) {
+      fn();
+      this.timers.push(setInterval(fn, 400));
+    },
+
+    // Tanpura: four strings plucked in the classic Pa – Sa – Sa – low Sa cycle.
+    tanpura(bus, level) {
       const ctx = this.ctx;
-      const gain = ctx.createGain();
-      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-      gain.gain.linearRampToValueAtTime(1, ctx.currentTime + 3);
-      gain.connect(this.master);
-
-      if (type === 'brown') {
-        const len = ctx.sampleRate * 4;
-        const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-        const data = buf.getChannelData(0);
-        let last = 0;
-        for (let i = 0; i < len; i++) {
-          const white = Math.random() * 2 - 1;
-          last = (last + 0.02 * white) / 1.02;
-          data[i] = last * 3.5;
-        }
-        const src = ctx.createBufferSource();
-        src.buffer = buf;
-        src.loop = true;
-        const g = ctx.createGain();
-        g.gain.value = 0.35;
-        src.connect(g).connect(gain);
-        src.start();
-        this.ambient = { gain, stop: () => src.stop(ctx.currentTime + 2) };
-        return;
-      }
-
-      // Tanpura: four strings plucked in the classic Pa – Sa – Sa – low Sa cycle.
       const SA = 130.81; // C3
       const strings = [SA * 0.75, SA, SA, SA / 2];
       const lowpass = ctx.createBiquadFilter();
       lowpass.type = 'lowpass';
       lowpass.frequency.value = 1400;
       lowpass.Q.value = 0.7;
-      lowpass.connect(gain);
+      const lvl = ctx.createGain();
+      lvl.gain.value = level;
+      lowpass.connect(lvl).connect(bus);
       let next = ctx.currentTime + 0.1;
       let i = 0;
       const pluck = (freq, at) => {
@@ -224,22 +321,222 @@
           osc.stop(at + 4.6);
         }
       };
-      const schedule = () => {
-        // Look ahead 2 s so throttled background timers never leave gaps.
+      this.every(() => {
         while (next < ctx.currentTime + 2) {
           pluck(strings[i % 4], next);
           next += i % 4 === 3 ? 1.6 : 1.1;
           i++;
         }
+      });
+    },
+
+    // Karplus–Strong plucked string, cached per pitch.
+    ksBuffer(freq) {
+      const key = Math.round(freq * 10);
+      if (this.ksCache.has(key)) return this.ksCache.get(key);
+      const ctx = this.ctx;
+      const sr = ctx.sampleRate;
+      const len = Math.floor(sr * 3.5);
+      const N = Math.max(2, Math.round(sr / freq));
+      const buf = ctx.createBuffer(1, len, sr);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < N; i++) d[i] = Math.random() * 2 - 1;
+      d[N] = 0.997 * d[0];
+      for (let i = N + 1; i < len; i++) d[i] = 0.4985 * (d[i - N] + d[i - N - 1]);
+      this.ksCache.set(key, buf);
+      return buf;
+    },
+
+    // Sitar voice: plucked string → buzzy "jawari" bridge → bright body resonance.
+    sitarVoice(bus) {
+      const ctx = this.ctx;
+      const input = ctx.createGain();
+      const shaper = ctx.createWaveShaper();
+      const curve = new Float32Array(1024);
+      for (let i = 0; i < curve.length; i++) {
+        const x = (i / (curve.length - 1)) * 2 - 1;
+        curve[i] = Math.tanh(2.2 * x) * 0.75 + 0.2 * x * x;
+      }
+      shaper.curve = curve;
+      const body = ctx.createBiquadFilter();
+      body.type = 'peaking';
+      body.frequency.value = 2400;
+      body.gain.value = 6;
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 90;
+      const out = ctx.createGain();
+      out.gain.value = 0.16;
+      input.connect(shaper).connect(body).connect(hp).connect(out).connect(bus);
+      let prev = null;
+      return {
+        lo: 0, hi: 10, sa: 130.81, min: 0.45, max: 1.3, rest: [2, 4.5],
+        play: (freqs, durs, t0) => {
+          let t = t0;
+          freqs.forEach((f, k) => {
+            const src = ctx.createBufferSource();
+            src.buffer = this.ksBuffer(f);
+            // Meend: sometimes slide into the note from the previous one.
+            if (prev && Math.random() < 0.35) {
+              src.playbackRate.setValueAtTime(prev / f, t);
+              src.playbackRate.setTargetAtTime(1, t + 0.04, 0.09);
+            }
+            const g = ctx.createGain();
+            g.gain.value = rand(0.7, 1);
+            src.connect(g).connect(input);
+            src.start(t);
+            src.stop(t + 3.5);
+            prev = f;
+            t += durs[k];
+          });
+        },
       };
-      schedule();
-      this.tanpuraTimer = setInterval(schedule, 400);
+    },
+
+    // Bansuri (bamboo flute) voice: soft sine with breath noise, gentle vibrato and glides between notes.
+    fluteVoice(bus) {
+      const ctx = this.ctx;
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 3200;
+      lp.connect(bus);
+      let prev = null;
+      return {
+        lo: 0, hi: 8, sa: 261.63, min: 0.9, max: 2.1, rest: [3, 6],
+        play: (freqs, durs, t0) => {
+          const total = durs.reduce((a, b) => a + b, 0);
+          const end = t0 + total;
+          const osc = ctx.createOscillator();
+          const osc2 = ctx.createOscillator();
+          osc.type = 'sine';
+          osc2.type = 'sine';
+          const h2 = ctx.createGain();
+          h2.gain.value = 0.12;
+          const g = ctx.createGain();
+          g.gain.setValueAtTime(0.0001, t0);
+          // Vibrato that blooms after the attack.
+          const lfo = ctx.createOscillator();
+          lfo.frequency.value = rand(4.6, 5.4);
+          const depth = ctx.createGain();
+          depth.gain.setValueAtTime(0, t0);
+          depth.gain.linearRampToValueAtTime(14, t0 + 0.9);
+          lfo.connect(depth);
+          depth.connect(osc.detune);
+          depth.connect(osc2.detune);
+          // Breath noise.
+          const nz = ctx.createBufferSource();
+          nz.buffer = this.noise();
+          nz.loop = true;
+          const bp = ctx.createBiquadFilter();
+          bp.type = 'bandpass';
+          bp.frequency.value = freqs[0] * 2;
+          bp.Q.value = 1.2;
+          const ng = ctx.createGain();
+          ng.gain.value = 0.18;
+          nz.connect(bp).connect(ng).connect(g);
+
+          let t = t0;
+          freqs.forEach((f, k) => {
+            if (k === 0) {
+              const from = prev && Math.random() < 0.5 ? prev : f;
+              osc.frequency.setValueAtTime(from, t);
+              osc.frequency.setTargetAtTime(f, t + 0.02, 0.1);
+              osc2.frequency.setValueAtTime(from * 2, t);
+              osc2.frequency.setTargetAtTime(f * 2, t + 0.02, 0.1);
+            } else {
+              const glide = Math.random() < 0.3 ? 0.14 : 0.04;
+              osc.frequency.setTargetAtTime(f, t, glide);
+              osc2.frequency.setTargetAtTime(f * 2, t, glide);
+              bp.frequency.setTargetAtTime(f * 2, t, glide);
+            }
+            const peak = 0.075 * rand(0.85, 1.1);
+            g.gain.setTargetAtTime(peak, t, k === 0 ? 0.12 : 0.05);
+            if (k < freqs.length - 1) g.gain.setTargetAtTime(peak * 0.7, t + durs[k] - 0.12, 0.04);
+            t += durs[k];
+          });
+          g.gain.setTargetAtTime(0.0001, end - 0.3, 0.25);
+
+          osc.connect(g);
+          osc2.connect(h2).connect(g);
+          g.connect(lp);
+          for (const n of [osc, osc2, lfo, nz]) { n.start(t0); n.stop(end + 1.5); }
+          prev = freqs[freqs.length - 1];
+        },
+      };
+    },
+
+    // Improvised phrases in Raag Bhupali; with several voices they take turns (call and response).
+    music(voices, startIn) {
+      const ctx = this.ctx;
+      let next = ctx.currentTime + startIn;
+      let turn = 0;
+      const pos = voices.map((v) => Math.round((v.lo + v.hi) / 2));
+      this.every(() => {
+        while (next < ctx.currentTime + 3) {
+          const vi = turn++ % voices.length;
+          const v = voices[vi];
+          const n = 3 + Math.floor(Math.random() * 4);
+          const steps = [];
+          let step = pos[vi];
+          for (let k = 0; k < n; k++) {
+            if (k > 0) step += pick([-2, -1, -1, 1, 1, 2]);
+            step = Math.min(v.hi, Math.max(v.lo, step));
+            steps.push(step);
+          }
+          let last = steps[n - 1];
+          while (!RESTING.includes(((last % 5) + 5) % 5)) last -= 1;
+          steps[n - 1] = Math.max(v.lo, last);
+          pos[vi] = steps[n - 1];
+          const durs = steps.map((_, k) => rand(v.min, v.max) * (k === n - 1 ? 2 : 1));
+          v.play(steps.map((s) => raagFreq(v.sa, s)), durs, next);
+          next += durs.reduce((a, b) => a + b, 0) + rand(...v.rest);
+        }
+      });
+    },
+
+    startAmbient(type, { preview = false } = {}) {
+      this.stopAmbient();
+      if (type === 'none' || !this.ensure()) return;
+      const ctx = this.ctx;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(1, ctx.currentTime + (preview ? 0.8 : 3));
+      gain.connect(this.master);
+      const wet = ctx.createGain();
+      wet.gain.value = type === 'brown' ? 0 : 0.8;
+      gain.connect(wet).connect(this.reverbIn);
+
+      if (type === 'brown') {
+        const len = ctx.sampleRate * 4;
+        const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+        const data = buf.getChannelData(0);
+        let last = 0;
+        for (let i = 0; i < len; i++) {
+          last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02;
+          data[i] = last * 3.5;
+        }
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        src.loop = true;
+        const g = ctx.createGain();
+        g.gain.value = 0.35;
+        src.connect(g).connect(gain);
+        src.start();
+        this.ambient = { gain, stop: () => src.stop(ctx.currentTime + 2) };
+        return;
+      }
+
+      this.tanpura(gain, type === 'tanpura' ? 1 : 0.45);
+      const voices = [];
+      if (type === 'sitar' || type === 'duet') voices.push(this.sitarVoice(gain));
+      if (type === 'flute' || type === 'duet') voices.push(this.fluteVoice(gain));
+      if (voices.length) this.music(voices, preview ? 0.4 : 4);
       this.ambient = { gain, stop: () => {} };
     },
 
     stopAmbient() {
-      clearInterval(this.tanpuraTimer);
-      this.tanpuraTimer = null;
+      for (const id of this.timers) clearInterval(id);
+      this.timers = [];
       if (this.ambient && this.ctx) {
         const { gain, stop } = this.ambient;
         const t = this.ctx.currentTime;
@@ -266,6 +563,7 @@
   };
   const vibrate = (ms) => { if (settings.vibrate && navigator.vibrate) navigator.vibrate(ms); };
   const practiceById = (id) => PRACTICES.find((p) => p.id === id) || PRACTICES[0];
+  const reducedMotion = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
   const dayKey = (d = new Date()) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
@@ -290,6 +588,7 @@
   }
 
   // ───────────────────────── Home screen ─────────────────────────
+  // Builds a group of radio-style buttons; returns a function that refreshes their state.
   function radioGroup(container, items, isSelected, onPick) {
     container.innerHTML = '';
     const buttons = items.map((item) => {
@@ -298,25 +597,130 @@
       b.setAttribute('role', 'radio');
       b.addEventListener('click', () => { onPick(item.value); update(); });
       container.appendChild(b);
-      return [b, item.value];
+      return [b, item];
     });
     const update = () => {
-      for (const [b, v] of buttons) {
-        const sel = isSelected(v);
+      for (const [b, item] of buttons) {
+        const sel = isSelected(item.value);
         b.setAttribute('aria-checked', String(sel));
         b.tabIndex = sel ? 0 : -1;
+        if (item.refresh) item.refresh(b);
       }
     };
-    // Arrow-key navigation within the group.
     container.addEventListener('keydown', (e) => {
       const keys = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
       if (!(e.key in keys)) return;
       e.preventDefault();
-      const idx = buttons.findIndex(([, v]) => isSelected(v));
-      const [b, v] = buttons[(idx + keys[e.key] + buttons.length) % buttons.length];
-      onPick(v); update(); b.focus();
+      const idx = Math.max(0, buttons.findIndex(([, item]) => isSelected(item.value)));
+      const [b, item] = buttons[(idx + keys[e.key] + buttons.length) % buttons.length];
+      onPick(item.value); update(); b.focus();
     });
     update();
+    return update;
+  }
+
+  const current = () => practiceById(settings.practice);
+  let customMode = false;      // the "Custom" duration chip is open
+  let updateDurations = () => {};
+  let previewTimer = null;
+
+  function stepper(label, value, unit, onChange) {
+    const row = document.createElement('div');
+    row.className = 'stepper';
+    row.innerHTML = '<span class="lbl"></span><button type="button" class="minus">−</button>' +
+      '<span class="val" aria-live="polite"></span><button type="button" class="plus">+</button>';
+    row.querySelector('.lbl').textContent = label;
+    const val = row.querySelector('.val');
+    const render = (v) => { val.textContent = `${v}${unit}`; };
+    row.querySelector('.minus').setAttribute('aria-label', `Less: ${label}`);
+    row.querySelector('.plus').setAttribute('aria-label', `More: ${label}`);
+    row.querySelector('.minus').addEventListener('click', () => render(onChange(-1)));
+    row.querySelector('.plus').addEventListener('click', () => render(onChange(1)));
+    render(value);
+    return row;
+  }
+
+  // The "Customise" panel: per-practice breath rhythm, bowl interval or gazing split.
+  function buildTune() {
+    const p = current();
+    const body = $('tune-body');
+    const c = custom(p);
+    body.innerHTML = '';
+    const foot = document.createElement('div');
+    foot.className = 'tune-foot';
+    const info = document.createElement('span');
+    const reset = document.createElement('button');
+    reset.type = 'button';
+    reset.className = 'link';
+    reset.textContent = 'Reset to default';
+    foot.append(info, reset);
+
+    const changed = () => {
+      saveSettings();
+      if (p.mode === 'breath') {
+        const secs = patternFor(p).map((ph) => ph[1]);
+        info.textContent = `One breath = ${secs.reduce((a, b) => a + b, 0)} s`;
+      } else {
+        info.textContent = '';
+      }
+      const isCustom = Boolean(c.pattern || c.interval || c.closedPct || c.bowlVibrate === false);
+      $('tune-summary').textContent = p.mode === 'breath' ? 'Customise breath rhythm' : 'Customise practice';
+      if (isCustom) $('tune-summary').textContent += ' · custom';
+    };
+
+    if (p.mode === 'breath') {
+      p.pattern.forEach(([label, , kind], i) => {
+        let name = label;
+        if (kind === 'hold') name = p.pattern[i - 1]?.[2] === 'in' ? 'Hold (lungs full)' : 'Hold (lungs empty)';
+        body.appendChild(stepper(name, patternFor(p)[i][1], ' s', (d) => {
+          const pat = patternFor(p).map((ph) => ph[1]);
+          pat[i] = clamp(pat[i] + d, LIMITS[kind]);
+          c.pattern = pat;
+          changed();
+          return pat[i];
+        }));
+      });
+    } else if (p.mode === 'bowl') {
+      body.appendChild(stepper('Time between bowl strikes', intervalFor(p), ' s', (d) => {
+        c.interval = clamp(intervalFor(p) + d * 2, LIMITS.interval);
+        changed();
+        return c.interval;
+      }));
+      const row = document.createElement('label');
+      row.className = 'tune-check';
+      row.innerHTML = '<span>Vibrate the phone with each strike</span><input type="checkbox" role="switch">';
+      const box = row.querySelector('input');
+      box.checked = bowlVibrateFor(p);
+      box.addEventListener('change', () => { c.bowlVibrate = box.checked; changed(); });
+      body.appendChild(row);
+    } else if (p.mode === 'gaze') {
+      body.appendChild(stepper('Eyes closed for the last', closedPctFor(p), ' %', (d) => {
+        c.closedPct = clamp(closedPctFor(p) + d * 10, LIMITS.closedPct);
+        changed();
+        return c.closedPct;
+      }));
+    }
+
+    reset.addEventListener('click', () => {
+      delete c.pattern; delete c.interval; delete c.closedPct; delete c.bowlVibrate;
+      saveSettings();
+      buildTune();
+    });
+    body.appendChild(foot);
+    changed();
+  }
+
+  function onPracticeChange() {
+    customMode = !DURATIONS.includes(durationFor(current()));
+    updateDurations();
+    syncCustomDuration();
+    buildTune();
+  }
+
+  function syncCustomDuration() {
+    const box = $('custom-dur');
+    box.hidden = !customMode;
+    $('custom-min').value = durationFor(current());
   }
 
   function buildHome() {
@@ -327,7 +731,7 @@
         render: () => {
           const b = document.createElement('button');
           b.className = 'practice';
-          b.innerHTML = `<span class="name"></span><span class="sk"></span><span class="desc"></span>`;
+          b.innerHTML = '<span class="name"></span><span class="sk"></span><span class="desc"></span>';
           b.querySelector('.name').textContent = p.name;
           b.querySelector('.sk').textContent = p.sk;
           b.querySelector('.desc').textContent = p.desc;
@@ -335,34 +739,80 @@
         },
       })),
       (v) => settings.practice === v,
-      (v) => { settings.practice = v; saveSettings(); },
+      (v) => { settings.practice = v; saveSettings(); onPracticeChange(); },
     );
 
-    radioGroup(
+    updateDurations = radioGroup(
       $('durations'),
-      DURATIONS.map((m) => ({
+      [...DURATIONS, 'custom'].map((m) => ({
         value: m,
         render: () => {
           const b = document.createElement('button');
           b.className = 'chip';
-          b.textContent = `${m} min`;
+          b.textContent = m === 'custom' ? 'Custom' : `${m} min`;
+          return b;
+        },
+        refresh: m === 'custom'
+          ? (b) => {
+            const d = durationFor(current());
+            b.textContent = customMode && !DURATIONS.includes(d) ? `${d} min ✎` : 'Custom';
+          }
+          : null,
+      })),
+      (v) => (v === 'custom' ? customMode : !customMode && durationFor(current()) === v),
+      (v) => {
+        if (v === 'custom') {
+          customMode = true;
+          syncCustomDuration();
+          $('custom-min').focus();
+          $('custom-min').select();
+          return;
+        }
+        customMode = false;
+        custom(current()).duration = v;
+        saveSettings();
+        syncCustomDuration();
+      },
+    );
+    $('custom-min').addEventListener('change', (e) => {
+      const v = clamp(Math.round(Number(e.target.value) || DEFAULT_DURATION), LIMITS.minutes);
+      e.target.value = v;
+      custom(current()).duration = v;
+      saveSettings();
+      updateDurations();
+    });
+
+    radioGroup(
+      $('sounds'),
+      SOUNDS.map(([value, label]) => ({
+        value,
+        render: () => {
+          const b = document.createElement('button');
+          b.className = 'chip';
+          b.textContent = label;
           return b;
         },
       })),
-      (v) => settings.duration === v,
-      (v) => { settings.duration = v; saveSettings(); },
+      (v) => settings.ambient === v,
+      (v) => {
+        settings.ambient = v;
+        saveSettings();
+        // Short preview so you know what you picked.
+        clearTimeout(previewTimer);
+        sound.startAmbient(v, { preview: true });
+        previewTimer = setTimeout(() => sound.stopAmbient(), 9000);
+      },
     );
 
     const bindSetting = (id, key, parse = (v) => v, prop = 'value') => {
-      const el = $(id);
-      el[prop] = settings[key];
-      el.addEventListener('change', () => {
-        settings[key] = parse(el[prop]);
+      const input = $(id);
+      input[prop] = settings[key];
+      input.addEventListener('change', () => {
+        settings[key] = parse(input[prop]);
         saveSettings();
         if (key === 'volume') sound.setVolume(settings.volume);
       });
     };
-    bindSetting('s-ambient', 'ambient');
     bindSetting('s-breathtone', 'breathTone', Boolean, 'checked');
     bindSetting('s-checkin', 'checkin', Number);
     bindSetting('s-volume', 'volume', Number);
@@ -378,6 +828,7 @@
     $('again').addEventListener('click', startSession);
     $('home-btn').addEventListener('click', () => { show('home'); renderStats(); $('begin').focus(); });
 
+    onPracticeChange();
     renderStats();
   }
 
@@ -414,28 +865,37 @@
   const RING_C = 2 * Math.PI * 94;
 
   function startSession() {
-    const practice = practiceById(settings.practice);
+    const practice = current();
+    clearTimeout(previewTimer);
     sound.ensure();
     sound.startAmbient(settings.ambient);
     keepAwake();
 
+    const pattern = practice.mode === 'breath' ? patternFor(practice) : null;
     S = {
       practice,
-      total: settings.duration * 60,
+      mode: practice.mode,
+      pattern,
+      cycle: pattern ? pattern.reduce((a, p) => a + p[1], 0) : 0,
+      interval: practice.mode === 'bowl' ? intervalFor(practice) : 0,
+      closedAt: practice.mode === 'gaze' ? 1 - closedPctFor(practice) / 100 : 1,
+      bowlVibrate: bowlVibrateFor(practice),
+      total: durationFor(practice) * 60,
       createdAt: now(),
       startAt: null,         // when the main timer began (after settling)
       pausedAt: null,
       pausedTotal: 0,
       phaseKey: '',
       lastCheckin: 0,
+      strikes: 0,
       returns: 0,
       eyesClosed: false,
       done: false,
-      cycle: practice.pattern ? practice.pattern.reduce((a, p) => a + p[1], 0) : 0,
     };
 
-    el.session.classList.toggle('trataka', !practice.pattern);
+    el.session.classList.toggle('trataka', S.mode === 'gaze');
     el.session.classList.remove('paused');
+    el.flame.style.transition = '';
     el.flame.style.opacity = '1';
     el.pause.textContent = 'Pause';
     el.phase.textContent = 'Settle';
@@ -465,7 +925,7 @@
   }
 
   function currentPhase(e) {
-    const { pattern } = S.practice;
+    const { pattern } = S;
     const cycleIndex = Math.floor(e / S.cycle);
     let t = e - cycleIndex * S.cycle;
     for (let i = 0; i < pattern.length; i++) {
@@ -473,13 +933,14 @@
       if (t < secs) return { i, label, secs, kind, p: t / secs, left: secs - t, cycleIndex };
       t -= secs;
     }
-    const last = pattern.length - 1;
+    let last = pattern.length - 1;
+    while (last > 0 && pattern[last][1] === 0) last--;
     return { i: last, label: pattern[last][0], secs: pattern[last][1], kind: pattern[last][2], p: 1, left: 0, cycleIndex };
   }
 
   // Orb size at a given point in the cycle: 'hold' keeps whatever size the previous phase ended at.
   function orbScale(ph) {
-    const { pattern } = S.practice;
+    const { pattern } = S;
     const span = ORB_MAX - ORB_MIN;
     if (ph.kind === 'in') return ORB_MIN + span * ease(ph.p);
     if (ph.kind === 'out') return ORB_MAX - span * ease(ph.p);
@@ -489,6 +950,27 @@
       if (prev === 'out') return ORB_MIN;
     }
     return ORB_MIN;
+  }
+
+  function strikeBowl() {
+    sound.bowl();
+    if (S.bowlVibrate && navigator.vibrate) navigator.vibrate([450, 140, 320, 170, 220, 210, 150, 250, 90, 300, 50]);
+    if (reducedMotion.matches) return;
+    // Sound waves rippling out from the bowl.
+    const stage = el.stage.getBoundingClientRect();
+    const size = stage.width;
+    for (const delay of [0, 0.9, 1.8]) {
+      const w = document.createElement('div');
+      w.className = 'wave';
+      Object.assign(w.style, {
+        width: `${size}px`, height: `${size}px`,
+        left: `${stage.left + stage.width / 2 - size / 2}px`,
+        top: `${stage.top + stage.height / 2 - size / 2}px`,
+        animationDelay: `${delay}s`,
+      });
+      el.ripples.appendChild(w);
+      setTimeout(() => w.remove(), (5 + delay) * 1000 + 200);
+    }
   }
 
   function tick() {
@@ -503,11 +985,12 @@
         return;
       }
       S.startAt = t;
-      sound.bell(0, 196, 1);
+      if (S.mode !== 'bowl') sound.bell(0, 196, 1); // the bowl's own first strike opens a bowl session
       vibrate(60);
       el.count.textContent = '';
-      setTimeout(() => { if (S && !S.done) fadeCue(); }, 12000);
-      setTimeout(() => el.tapHint.classList.add('hidden'), 15000);
+      const session = S; // these timers must not touch a later session
+      setTimeout(() => { if (S === session && !session.done) fadeCue(); }, 12000);
+      setTimeout(() => { if (S === session) el.tapHint.classList.add('hidden'); }, 15000);
     }
 
     const e = elapsed();
@@ -517,7 +1000,7 @@
     if (!settings.hideClock) el.clock.textContent = fmt(left);
     el.ring.style.strokeDashoffset = String(RING_C * (1 - e / S.total));
 
-    if (S.practice.pattern) {
+    if (S.mode === 'breath') {
       const ph = currentPhase(e);
       const key = `${ph.cycleIndex}:${ph.i}`;
       if (key !== S.phaseKey) {
@@ -528,10 +1011,18 @@
         if (settings.breathTone) sound.breath(ph.kind, Math.min(ph.left, ph.secs));
         vibrate(ph.kind === 'hold' ? 15 : 35);
       }
+    } else if (S.mode === 'bowl') {
+      const n = Math.floor(e / S.interval);
+      if (n >= S.strikes) {
+        S.strikes = n + 1;
+        if (left > 6) strikeBowl(); // the closing bells follow soon anyway
+      }
+      const since = e - n * S.interval;
+      el.phase.textContent = since < Math.min(12, S.interval * 0.7) ? 'Listen…' : 'Rest in silence';
+      el.count.textContent = `bowl ${n + 1}`;
     } else {
       // Trataka: gaze, then close eyes for the last part.
-      const closed = e / S.total >= TRATAKA_EYES_CLOSED_AT;
-      if (closed && !S.eyesClosed) {
+      if (e / S.total >= S.closedAt && !S.eyesClosed) {
         S.eyesClosed = true;
         sound.bell(0, 233, 0.6);
         vibrate(60);
@@ -542,8 +1033,8 @@
       el.phase.textContent = S.eyesClosed ? 'Eyes closed' : 'Gaze softly';
     }
 
-    // Gentle check-in bell to catch a drifting mind (skipped in the final 15 s).
-    if (settings.checkin > 0 && left > 15) {
+    // Gentle check-in bell to catch a drifting mind (the bowl already does this; skipped in the final 15 s).
+    if (settings.checkin > 0 && S.mode !== 'bowl' && left > 15) {
       const n = Math.floor(e / settings.checkin);
       if (n > S.lastCheckin) {
         S.lastCheckin = n;
@@ -555,8 +1046,19 @@
 
   function frame() {
     if (!S || S.done) return;
-    if (S.practice.pattern && S.startAt != null) {
-      el.orb.style.transform = `scale(${orbScale(currentPhase(elapsed())).toFixed(4)})`;
+    if (S.startAt != null) {
+      const e = elapsed();
+      if (S.mode === 'breath') {
+        el.orb.style.transform = `scale(${orbScale(currentPhase(e)).toFixed(4)})`;
+      } else if (S.mode === 'bowl' && S.strikes > 0) {
+        // The orb swells with each strike and shimmers as the sound decays.
+        const since = Math.max(0, e - (S.strikes - 1) * S.interval);
+        const env = Math.exp(-since / 5);
+        const still = reducedMotion.matches;
+        const scale = ORB_MIN + (ORB_MAX - ORB_MIN) * 0.85 * env * (still ? 1 : 1 + 0.03 * Math.sin(2 * Math.PI * 2.2 * since));
+        const dx = still ? 0 : env * 1.6 * Math.sin(2 * Math.PI * 13 * since);
+        el.orb.style.transform = `translateX(${dx.toFixed(2)}px) scale(${scale.toFixed(4)})`;
+      }
     }
     requestAnimationFrame(frame);
   }
@@ -575,6 +1077,7 @@
     if (S.pausedAt == null) {
       S.pausedAt = now();
       sound.pause();
+      if (navigator.vibrate) navigator.vibrate(0);
       el.session.classList.add('paused');
       el.pause.textContent = 'Resume';
       el.pause.setAttribute('aria-label', 'Resume');
@@ -603,6 +1106,7 @@
     if (S.pausedAt != null) sound.resume();
     sound.stopAmbient();
     releaseAwake();
+    el.ripples.querySelectorAll('.wave').forEach((w) => w.remove());
     if (completed) { sound.bell(0, 196, 1); sound.bell(2.2, 196, 0.8); sound.bell(4.4, 196, 0.6); }
 
     if (e >= 20) recordSession(e, S.practice.id, S.returns);
@@ -649,7 +1153,7 @@
 
   function bindSession() {
     Object.assign(el, {
-      session: $('session'), orb: $('orb'), flame: $('flame'), ring: $('ring-fg'),
+      session: $('session'), stage: $('stage'), orb: $('orb'), flame: $('flame'), ring: $('ring-fg'),
       phase: $('phase'), count: $('count'), cue: $('cue'), clock: $('clock'),
       controls: $('controls'), pause: $('pause'), tapHint: $('tap-hint'), ripples: $('ripple-layer'),
     });

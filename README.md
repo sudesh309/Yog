@@ -13,9 +13,17 @@ No install, no account, no tracking, no dependencies. It's plain HTML/CSS/JS, an
 | Humming Bee | Bhrāmarī · भ्रामरी | Breathe in, hum on a long out-breath |
 | Alternate Nostril | Nāḍī Śodhana · नाड़ी शोधन | Left / right nostril cues, round by round |
 | Om Chanting | Oṃ Japa · ॐ जप | Breathe in, chant A-U-M on the out-breath |
+| Singing Bowl | Nāda · नाद | A Buddhist singing bowl rings every 20 s. Follow each tone into silence, feel its vibration (the phone vibrates too) |
 | Candle Gazing | Trāṭaka · त्राटक | Gaze at a steady flame, then close your eyes for the last part |
 
-Durations: 1, 3, 5, 10, 15 or 20 minutes.
+Durations: 1, 3, 5, 10, 15 or 20 minutes, or a custom 1–120 minutes.
+
+**Customise each practice.** Each practice remembers its own length. Open *Customise* to change it:
+- every breath phase (in / hold / out / hold) for the breathing practices
+- the time between strikes, and whether the phone vibrates, for Singing Bowl
+- how long your eyes stay closed at the end of Candle Gazing
+
+The meditation screen looks the same whatever you choose.
 
 ## Built for ADHD
 
@@ -24,7 +32,7 @@ Durations: 1, 3, 5, 10, 15 or 20 minutes.
 - **One visual anchor.** A breathing circle (or a flame) and nothing else. Controls fade away after a few seconds.
 - **Short sessions first.** It defaults to 3 minutes, and a progress ring shows how far along you are.
 - **Hide the clock** if clock-watching distracts you.
-- **Background sound:** tanpura drone or brown noise, which many people with ADHD find helps them focus.
+- **Background sound:** tanpura drone, sitar, bansuri flute, sitar and flute together, or brown noise (which many people with ADHD find helps them focus). The sitar and flute improvise slow phrases in the calm Raag Bhupali over a soft tanpura. They are synthesised live (a plucked-string model for the sitar, a breathy, vibrato tone for the bansuri), so the music never loops. Tap a sound on the home screen to hear a preview.
 - **Breath guide tone** that rises while you breathe in and falls while you breathe out, so you can keep your eyes closed.
 - **Vibration cues** on phones (optional).
 - A 5-second settle-in, singing-bowl bells at the start and end, and the screen stays awake (Wake Lock).
