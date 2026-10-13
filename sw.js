@@ -1,5 +1,5 @@
 // Offline cache for Yog. Bump VERSION whenever app files change.
-const VERSION = 'yog-v2';
+const VERSION = 'yog-v4';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', (e) => {

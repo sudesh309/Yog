@@ -83,7 +83,6 @@
     ['tanpura', 'Tanpura'],
     ['sitar', 'Sitar'],
     ['flute', 'Bansuri flute'],
-    ['duet', 'Sitar + flute'],
     ['brown', 'Brown noise'],
   ];
 
@@ -116,12 +115,15 @@
   };
 
   const DEFAULTS = {
-    practice: 'anapana', ambient: 'none', breathTone: true,
+    practice: 'anapana', ambient: 'none', breathTone: false,
     checkin: 60, volume: 0.7, hideClock: false, vibrate: false,
     custom: {}, // per practice: { duration, pattern: [secs…], interval, bowlVibrate, closedPct }
   };
   const settings = Object.assign({}, DEFAULTS, store.get('yog.settings', {}));
   if (typeof settings.custom !== 'object' || !settings.custom) settings.custom = {};
+  if (!SOUNDS.some(([v]) => v === settings.ambient)) settings.ambient = 'none'; // e.g. the removed sitar + flute duet
+  // v3: the breath guide tone became opt-in because its constant hum sounded like a drone in every practice.
+  if ((settings.v || 0) < 3) { settings.breathTone = false; settings.v = 3; store.set('yog.settings', settings); }
   const saveSettings = () => store.set('yog.settings', settings);
 
   const clamp = (v, [lo, hi]) => Math.min(hi, Math.max(lo, v));
@@ -330,62 +332,68 @@
       });
     },
 
-    // Karplus–Strong plucked string, cached per pitch.
+    // Karplus–Strong plucked string, cached per pitch. The excitation is smoothed noise,
+    // like a soft fingertip pluck rather than a sharp pick, so the tone stays warm.
     ksBuffer(freq) {
       const key = Math.round(freq * 10);
       if (this.ksCache.has(key)) return this.ksCache.get(key);
       const ctx = this.ctx;
       const sr = ctx.sampleRate;
-      const len = Math.floor(sr * 3.5);
+      const len = Math.floor(sr * 4);
       const N = Math.max(2, Math.round(sr / freq));
       const buf = ctx.createBuffer(1, len, sr);
       const d = buf.getChannelData(0);
-      for (let i = 0; i < N; i++) d[i] = Math.random() * 2 - 1;
-      d[N] = 0.997 * d[0];
-      for (let i = N + 1; i < len; i++) d[i] = 0.4985 * (d[i - N] + d[i - N - 1]);
+      let lp = 0;
+      let peak = 0;
+      for (let pass = 0; pass < 3; pass++) {
+        for (let i = 0; i < N; i++) {
+          lp += 0.35 * ((pass === 0 ? Math.random() * 2 - 1 : d[i]) - lp);
+          d[i] = lp;
+        }
+      }
+      for (let i = 0; i < N; i++) peak = Math.max(peak, Math.abs(d[i]));
+      for (let i = 0; i < N; i++) d[i] /= peak || 1;
+      d[N] = 0.998 * d[0];
+      for (let i = N + 1; i < len; i++) d[i] = 0.499 * (d[i - N] + d[i - N - 1]);
       this.ksCache.set(key, buf);
       return buf;
     },
 
-    // Sitar voice: plucked string → buzzy "jawari" bridge → bright body resonance.
+    // Sitar voice: low, softly plucked string through a warm low-pass, with slow slides (meend).
     sitarVoice(bus) {
       const ctx = this.ctx;
       const input = ctx.createGain();
-      const shaper = ctx.createWaveShaper();
-      const curve = new Float32Array(1024);
-      for (let i = 0; i < curve.length; i++) {
-        const x = (i / (curve.length - 1)) * 2 - 1;
-        curve[i] = Math.tanh(2.2 * x) * 0.75 + 0.2 * x * x;
-      }
-      shaper.curve = curve;
-      const body = ctx.createBiquadFilter();
-      body.type = 'peaking';
-      body.frequency.value = 2400;
-      body.gain.value = 6;
+      const warm = ctx.createBiquadFilter();
+      warm.type = 'lowpass';
+      warm.frequency.value = 1300;
+      warm.Q.value = 0.5;
       const hp = ctx.createBiquadFilter();
       hp.type = 'highpass';
-      hp.frequency.value = 90;
+      hp.frequency.value = 70;
       const out = ctx.createGain();
-      out.gain.value = 0.16;
-      input.connect(shaper).connect(body).connect(hp).connect(out).connect(bus);
+      out.gain.value = 0.1;
+      input.connect(warm).connect(hp).connect(out).connect(bus);
       let prev = null;
       return {
-        lo: 0, hi: 10, sa: 130.81, min: 0.45, max: 1.3, rest: [2, 4.5],
+        // Steps in Raag Bhupali from low Pa (G2) up to middle Sa (C4): a calm, low register.
+        lo: -2, hi: 5, sa: 130.81, min: 0.9, max: 1.8, rest: [3, 6],
         play: (freqs, durs, t0) => {
           let t = t0;
           freqs.forEach((f, k) => {
             const src = ctx.createBufferSource();
             src.buffer = this.ksBuffer(f);
-            // Meend: sometimes slide into the note from the previous one.
-            if (prev && Math.random() < 0.35) {
+            // Meend: often slide gently into the note from the previous one.
+            if (prev && prev !== f && Math.random() < 0.5) {
               src.playbackRate.setValueAtTime(prev / f, t);
-              src.playbackRate.setTargetAtTime(1, t + 0.04, 0.09);
+              src.playbackRate.setTargetAtTime(1, t + 0.05, 0.15);
             }
             const g = ctx.createGain();
-            g.gain.value = rand(0.7, 1);
+            const v = rand(0.75, 1);
+            g.gain.setValueAtTime(0.0001, t);
+            g.gain.linearRampToValueAtTime(v, t + 0.015);
             src.connect(g).connect(input);
             src.start(t);
-            src.stop(t + 3.5);
+            src.stop(t + 4);
             prev = f;
             t += durs[k];
           });
@@ -393,16 +401,19 @@
       };
     },
 
-    // Bansuri (bamboo flute) voice: soft sine with breath noise, gentle vibrato and glides between notes.
+    // Bansuri (bamboo flute) voice in a meditative alaap style: a low, breathy tone that holds
+    // each note for several seconds, slides slowly between notes and leaves long silences.
     fluteVoice(bus) {
       const ctx = this.ctx;
       const lp = ctx.createBiquadFilter();
       lp.type = 'lowpass';
-      lp.frequency.value = 3200;
+      lp.frequency.value = 1800;
       lp.connect(bus);
       let prev = null;
       return {
-        lo: 0, hi: 8, sa: 261.63, min: 0.9, max: 2.1, rest: [3, 6],
+        // Low Dha (E3) to Pa (D4) around Sa = G3: the deep, soft range of a bass bansuri.
+        lo: -1, hi: 3, sa: 196, notes: [2, 3], moves: [-1, -1, 1, 1, 2, -2],
+        min: 3, max: 5.5, rest: [5, 9],
         play: (freqs, durs, t0) => {
           const total = durs.reduce((a, b) => a + b, 0);
           const end = t0 + total;
@@ -411,84 +422,82 @@
           osc.type = 'sine';
           osc2.type = 'sine';
           const h2 = ctx.createGain();
-          h2.gain.value = 0.12;
+          h2.gain.value = 0.08;
           const g = ctx.createGain();
           g.gain.setValueAtTime(0.0001, t0);
-          // Vibrato that blooms after the attack.
+          // Slow, shallow vibrato that only appears once a note has settled.
           const lfo = ctx.createOscillator();
-          lfo.frequency.value = rand(4.6, 5.4);
+          lfo.frequency.value = rand(3.8, 4.4);
           const depth = ctx.createGain();
           depth.gain.setValueAtTime(0, t0);
-          depth.gain.linearRampToValueAtTime(14, t0 + 0.9);
+          depth.gain.linearRampToValueAtTime(0, t0 + 1.5);
+          depth.gain.linearRampToValueAtTime(7, t0 + 3);
           lfo.connect(depth);
           depth.connect(osc.detune);
           depth.connect(osc2.detune);
-          // Breath noise.
+          // Soft breath noise.
           const nz = ctx.createBufferSource();
           nz.buffer = this.noise();
           nz.loop = true;
           const bp = ctx.createBiquadFilter();
           bp.type = 'bandpass';
           bp.frequency.value = freqs[0] * 2;
-          bp.Q.value = 1.2;
+          bp.Q.value = 1.5;
           const ng = ctx.createGain();
-          ng.gain.value = 0.18;
+          ng.gain.value = 0.1;
           nz.connect(bp).connect(ng).connect(g);
 
           let t = t0;
           freqs.forEach((f, k) => {
             if (k === 0) {
-              const from = prev && Math.random() < 0.5 ? prev : f;
+              const from = prev || f;
               osc.frequency.setValueAtTime(from, t);
-              osc.frequency.setTargetAtTime(f, t + 0.02, 0.1);
+              osc.frequency.setTargetAtTime(f, t + 0.1, 0.3);
               osc2.frequency.setValueAtTime(from * 2, t);
-              osc2.frequency.setTargetAtTime(f * 2, t + 0.02, 0.1);
+              osc2.frequency.setTargetAtTime(f * 2, t + 0.1, 0.3);
+              g.gain.setTargetAtTime(0.07, t, 0.5); // slow swell in, no sharp attack
             } else {
-              const glide = Math.random() < 0.3 ? 0.14 : 0.04;
-              osc.frequency.setTargetAtTime(f, t, glide);
-              osc2.frequency.setTargetAtTime(f * 2, t, glide);
-              bp.frequency.setTargetAtTime(f * 2, t, glide);
+              // Meend: a slow, unbroken slide into the next note.
+              osc.frequency.setTargetAtTime(f, t, 0.35);
+              osc2.frequency.setTargetAtTime(f * 2, t, 0.35);
+              bp.frequency.setTargetAtTime(f * 2, t, 0.35);
             }
-            const peak = 0.075 * rand(0.85, 1.1);
-            g.gain.setTargetAtTime(peak, t, k === 0 ? 0.12 : 0.05);
-            if (k < freqs.length - 1) g.gain.setTargetAtTime(peak * 0.7, t + durs[k] - 0.12, 0.04);
             t += durs[k];
           });
-          g.gain.setTargetAtTime(0.0001, end - 0.3, 0.25);
+          g.gain.setTargetAtTime(0.0001, end - 1.2, 0.5); // long fade into silence
 
           osc.connect(g);
           osc2.connect(h2).connect(g);
           g.connect(lp);
-          for (const n of [osc, osc2, lfo, nz]) { n.start(t0); n.stop(end + 1.5); }
+          for (const n of [osc, osc2, lfo, nz]) { n.start(t0); n.stop(end + 2); }
           prev = freqs[freqs.length - 1];
         },
       };
     },
 
-    // Improvised phrases in Raag Bhupali; with several voices they take turns (call and response).
-    music(voices, startIn) {
+    // Improvised phrases in Raag Bhupali for one instrument; each phrase settles on Sa, Ga or Pa.
+    music(v, startIn) {
       const ctx = this.ctx;
       let next = ctx.currentTime + startIn;
-      let turn = 0;
-      const pos = voices.map((v) => Math.round((v.lo + v.hi) / 2));
+      let pos = Math.max(v.lo, Math.min(v.hi, 0));
+      const [nMin, nMax] = v.notes || [3, 6];
+      const moves = v.moves || [-2, -1, -1, 1, 1, 2];
       this.every(() => {
         while (next < ctx.currentTime + 3) {
-          const vi = turn++ % voices.length;
-          const v = voices[vi];
-          const n = 3 + Math.floor(Math.random() * 4);
+          const n = nMin + Math.floor(Math.random() * (nMax - nMin + 1));
           const steps = [];
-          let step = pos[vi];
+          let step = pos;
           for (let k = 0; k < n; k++) {
-            if (k > 0) step += pick([-2, -1, -1, 1, 1, 2]);
+            if (k > 0) step += pick(moves);
             step = Math.min(v.hi, Math.max(v.lo, step));
             steps.push(step);
           }
           let last = steps[n - 1];
           while (!RESTING.includes(((last % 5) + 5) % 5)) last -= 1;
           steps[n - 1] = Math.max(v.lo, last);
-          pos[vi] = steps[n - 1];
-          const durs = steps.map((_, k) => rand(v.min, v.max) * (k === n - 1 ? 2 : 1));
-          v.play(steps.map((s) => raagFreq(v.sa, s)), durs, next);
+          pos = steps[n - 1];
+          const durs = steps.map((_, k) => rand(v.min, v.max) * (k === n - 1 ? 1.5 : 1));
+          v.play(steps.map((x) => raagFreq(v.sa, x)), durs, next);
           next += durs.reduce((a, b) => a + b, 0) + rand(...v.rest);
         }
       });
@@ -526,11 +535,10 @@
         return;
       }
 
-      this.tanpura(gain, type === 'tanpura' ? 1 : 0.45);
-      const voices = [];
-      if (type === 'sitar' || type === 'duet') voices.push(this.sitarVoice(gain));
-      if (type === 'flute' || type === 'duet') voices.push(this.fluteVoice(gain));
-      if (voices.length) this.music(voices, preview ? 0.4 : 4);
+      // One instrument at a time, never layered.
+      if (type === 'tanpura') this.tanpura(gain, 1);
+      else if (type === 'sitar') this.music(this.sitarVoice(gain), preview ? 0.3 : 2);
+      else if (type === 'flute') this.music(this.fluteVoice(gain), preview ? 0.3 : 2);
       this.ambient = { gain, stop: () => {} };
     },
 
