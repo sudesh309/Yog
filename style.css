@@ -89,6 +89,9 @@ button, select, input { font: inherit; color: inherit; }
 .practice .sk { color: var(--muted); font-size: 0.9rem; }
 .practice .desc { grid-column: 1 / -1; color: var(--muted); font-size: 0.9rem; line-height: 1.4; }
 .practice[aria-checked="true"] { border-color: var(--accent); background: var(--accent-soft); }
+/* Only the chosen practice shows its description: less to read at once. */
+.practice .desc { display: none; }
+.practice[aria-checked="true"] .desc { display: block; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .chip {
@@ -97,6 +100,30 @@ button, select, input { font: inherit; color: inherit; }
   background: transparent; cursor: pointer;
 }
 .chip[aria-checked="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+.custom-dur { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.7rem; }
+.custom-dur[hidden] { display: none; }
+.custom-dur input {
+  width: 5.5rem; padding: 0.5rem 0.7rem; border-radius: 10px;
+  background: var(--bg-2); border: 1.5px solid var(--accent);
+}
+
+.tune { margin-top: 0.9rem; }
+.tune summary { cursor: pointer; color: var(--accent); }
+.tune-body { padding-top: 0.4rem; }
+.stepper {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.55rem 0; border-bottom: 1px solid var(--line);
+}
+.stepper .lbl { flex: 1; }
+.stepper button {
+  width: 2.4rem; height: 2.4rem; border-radius: 50%;
+  border: 1.5px solid var(--line); background: transparent; cursor: pointer; font-size: 1.2rem; line-height: 1;
+}
+.stepper .val { min-width: 3.4rem; text-align: center; font-variant-numeric: tabular-nums; font-weight: 600; }
+.tune-check { display: flex; justify-content: space-between; align-items: center; padding: 0.6rem 0; border-bottom: 1px solid var(--line); }
+.tune-check input { width: 1.3rem; height: 1.3rem; accent-color: var(--accent); }
+.tune-foot { display: flex; justify-content: space-between; align-items: center; gap: 1rem; color: var(--muted); font-size: 0.85rem; }
 
 .hint { color: var(--muted); font-size: 0.85rem; margin: 0.6rem 0 0; }
 
@@ -224,6 +251,17 @@ button, select, input { font: inherit; color: inherit; }
 }
 @keyframes ripple { to { transform: scale(7); opacity: 0; } }
 
+/* Singing bowl: sound waves spreading out from the bowl */
+.wave {
+  position: absolute; border-radius: 50%;
+  border: 2px solid var(--orb-a); opacity: 0;
+  animation: wave 5s ease-out forwards;
+}
+@keyframes wave {
+  0% { transform: scale(0.45); opacity: 0.55; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+
 #session.paused .orb { opacity: 0.35; }
 
 /* ───────────── Done ───────────── */
@@ -240,4 +278,5 @@ button, select, input { font: inherit; color: inherit; }
   .flame-inner { animation: none; }
   .ripple { animation-duration: 0.01s; }
   .ring-fg { transition: none; }
+  .wave { animation: none; }
 }
