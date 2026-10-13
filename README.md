@@ -32,8 +32,8 @@ The meditation screen looks the same whatever you choose.
 - **One visual anchor.** A breathing circle (or a flame) and nothing else. Controls fade away after a few seconds.
 - **Short sessions first.** It defaults to 3 minutes, and a progress ring shows how far along you are.
 - **Hide the clock** if clock-watching distracts you.
-- **Background sound** (Silence by default; only one plays at a time): tanpura drone, sitar, bansuri flute, or brown noise (which many people with ADHD find helps them focus). The sitar and flute improvise slow phrases in the calm Raag Bhupali. The sitar stays in a low, warm register with soft plucks and gentle slides between notes. Both are synthesised live, so the music never loops. Tap a sound on the home screen to hear a preview.
-- **Breath guide tone** that rises while you breathe in and falls while you breathe out, so you can keep your eyes closed.
+- **Background sound** (Silence by default; only one plays at a time): tanpura drone, sitar, bansuri flute, or brown noise (which many people with ADHD find helps them focus). The sitar and flute improvise slow phrases in the calm Raag Bhupali. The sitar stays in a low, warm register with soft plucks and gentle slides between notes. The bansuri plays like a slow alaap: low, breathy notes held for several seconds, slow slides, and long silences. Both are synthesised live, so the music never loops. Tap a sound on the home screen to hear a preview.
+- **Breath guide tone** (optional, off by default): a soft hum that rises while you breathe in and falls while you breathe out, so you can keep your eyes closed.
 - **Vibration cues** on phones (optional).
 - A 5-second settle-in, singing-bowl bells at the start and end, and the screen stays awake (Wake Lock).
 - Remembers your choices, and shows today's minutes and your streak. Everything is stored only in your browser.
